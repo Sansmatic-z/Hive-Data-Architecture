@@ -1,13 +1,25 @@
 # HDA VAULT (Hive Data Architecture)
 
+<div align="center">
+  <img src="https://img.shields.io/badge/License-PolyForm_Noncommercial-gold?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/Protected_By-Raj_Mitra-blue?style=for-the-badge" alt="Creator">
+  <img src="https://img.shields.io/badge/Protocol-HDA_v3.0-emerald?style=for-the-badge" alt="Protocol">
+  <img src="https://img.shields.io/badge/Security-AES--256--GCM-red?style=for-the-badge" alt="Security">
+</div>
+
+<br />
+
 A robust, high-capacity encoding system that treats data as a structured 'Virtual Book'. Uses 24-bit color logic for pixel-perfect data mapping, split into compressed pages for handling multi-gigabyte files without browser memory limits.
 
 ## Created By
 **Raj Mitra** - Lead Architect & Creator
 
-## Copyright
-Copyright © 2026 Raj Mitra. All rights reserved. 
-All rights to this software, its architecture, and the HDA Protocol are owned exclusively by Raj Mitra.
+## Copyright & Licensing
+This project is protected under a multi-layered licensing framework:
+1. **Software**: [PolyForm Noncommercial 1.0.0](LICENSE) (Source Available).
+2. **Architecture & Documentation**: [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) (Attribution Required).
+
+**Summary**: You are free to view, test, and use this for personal projects. You **must** give credit to Raj Mitra. You **cannot** sell this or use it for commercial profit without a private license.
 
 ## Features
 - **Military-Grade Security**: AES-256-GCM encryption for all items.
