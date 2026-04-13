@@ -46,5 +46,15 @@ If you use HDA Vault in your research or projects, please provide proper credit.
 ## Contributing
 Please see `CONTRIBUTING.md` for our Contributor License Agreement (CLA) before submitting any changes.
 
+## Commercial Licensing & Inquiries
+The **HDA Protocol** and **Hive Data Architecture** are proprietary innovations by Raj Mitra. 
+
+If you are a commercial entity interested in:
+- Integrating HDA Vault into a production system.
+- Obtaining a commercial-use license for the HDA Protocol.
+- Commissioning custom features or enterprise support.
+
+Please reach out to **Raj Mitra** directly at **r.8981718053@gmail.com**.
+
 ## Security Reporting
 To report vulnerabilities privately, please see `SECURITY.md`.
