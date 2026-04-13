@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "author": "Raj Mitra",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
