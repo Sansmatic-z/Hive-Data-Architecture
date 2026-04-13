@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as follows."
+authors:
+- family-names: "Mitra"
+  given-names: "Raj"
+title: "HDA Vault: Hive Data Architecture"
+version: 1.0.0
+date-released: 2026-04-13
+url: "https://github.com/rajmitra/hda-vault"

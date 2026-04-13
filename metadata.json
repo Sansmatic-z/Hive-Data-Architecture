@@ -1,0 +1,6 @@
+{
+  "name": "HDA Vault",
+  "author": "Raj Mitra",
+  "description": "A robust, high-capacity encoding system that treats data as a structured 'Virtual Book'. Uses 24-bit color logic for pixel-perfect data mapping, split into compressed pages for handling multi-gigabyte files without browser memory limits.",
+  "requestFramePermissions": []
+}
