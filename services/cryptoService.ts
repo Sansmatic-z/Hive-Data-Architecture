@@ -1,6 +1,6 @@
 
 /**
- * ChromaVault Cryptographic Service
+ * HDA Cryptographic Service
  * Uses Web Crypto API for high-performance, secure data transformation.
  */
 

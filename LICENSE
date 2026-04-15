@@ -1,49 +1,115 @@
-# PolyForm Noncommercial License 1.0.0
+PolyForm Noncommercial License 1.0.0
+
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
 
 ## Acceptance
 
-In order to get any license under these terms, you must agree to them as the terms of a contract which is then between you and the licensor. The licensor grants you any license under these terms only in exchange for your agreement, and you are not allowed to use the software except under these terms.
+In order to get any license under these terms, you must agree
+to them as both strict obligations and conditions to all
+your licenses.
 
 ## Copyright License
 
-The licensor grants you a non-exclusive, royalty-free, worldwide, non-sublicensable license to reproduce, adapt, and distribute the software, for noncommercial purposes only.
+The licensor grants you a copyright license for the
+software to do everything you might do with the software
+that would otherwise infringe the licensor's copyright
+in it for any permitted purpose.  However, you may
+only distribute the software according to [Distribution
+License](#distribution-license) and make changes or new works
+based on the software according to [Changes and New Works
+License](#changes-and-new-works-license).
 
-## Patent License
+## Distribution License
 
-The licensor grants you a non-exclusive, royalty-free, worldwide, non-sublicensable license under their relevant patents to make, have made, use, sell, offer for sale, and import the software, for noncommercial purposes only.
-
-## Noncommercial Purposes
-
-Noncommercial purposes are purposes that are not primarily intended for or directed toward commercial advantage or monetary compensation.
+The licensor grants you an additional copyright license
+to distribute copies of the software.  Your license
+to distribute covers distributing the software with
+changes and new works permitted by [Changes and New Works
+License](#changes-and-new-works-license).
 
 ## Notices
 
-You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms or the URL for them: https://polyformproject.org/licenses/noncommercial/1.0.0
+You must ensure that anyone who gets a copy of any part of
+the software from you also gets a copy of these terms or the
+URL for them above, as well as copies of any plain-text lines
+beginning with `Required Notice:` that the licensor provided
+with the software.  For example:
+
+> Required Notice: Copyright Raj Mitra.
+
+## Changes and New Works License
+
+The licensor grants you an additional copyright license to
+make changes and new works based on the software for any
+permitted purpose.
+
+## Permitted Purposes
+
+You may use the software for any purpose other than a
+commercial purpose.
+
+## Commercial Purposes
+
+Any use of the software for a commercial advantage or
+monetary compensation is a commercial purpose.
+
+## Provision of Copies
+
+You may provide copies of the software to others for any
+permitted purpose.
 
 ## No Other Rights
 
-These terms do not imply any other licenses or rights in any patents, trademarks, or copyrights or other intellectual property.
+These terms do not allow you to sublicense or transfer any of
+your licenses to anyone else, or prevent the licensor from
+granting licenses to anyone else.  These terms do not imply
+any other licenses.
 
-## Defense
+## Patent Defense
 
-If you make any claim of patent infringement against the licensor or anyone else for the use of the software, your license ends immediately.
+If you make any written claim that the software infringes or
+contributes to infringement of any patent, your licenses for
+the software granted under these terms end immediately.  If your
+company makes such a claim, your patent license ends immediately
+for work on behalf of your company.
 
-## Prototypes
+## Violations
 
-The licensor may provide you with software that is not a finished product. If they do, they provide it "as is," and you should not use it for anything where its failure could cause harm.
+The first time you are notified in writing that you have
+violated any of these terms, or done anything with the software
+not covered by your licenses, your licenses can nonetheless
+continue if you come into full compliance with these terms,
+and take practical steps to correct past violations, within
+32 days of receiving notice.  Otherwise, all your licenses
+end immediately.
 
-## DISCLAIMER
+## No Liability
 
-THE SOFTWARE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY. THE LICENSOR DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+***As far as the law allows, the software comes as is, without
+any warranty or condition, and the licensor will not be liable
+to you for any damages arising out of these terms or the use
+or nature of the software, under any kind of legal claim.***
 
-## LIMITATION OF LIABILITY
+## Definitions
 
-THE LICENSOR IS NOT LIABLE FOR ANY DAMAGES, INCLUDING DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, ARISING OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THESE TERMS.
+The **licensor** is the individual or entity offering these
+terms, and the **software** is the software the licensor makes
+available under these terms.
 
-## Termination
+**You** refers to the individual or entity agreeing to these
+terms.
 
-If you violate these terms, your license ends immediately.
+**Your company** is any legal entity, sole proprietorship,
+or other kind of organization that you work for, plus all
+organizations that have control over, are under the control
+of, or are under common control with that organization.
+**Control** means ownership of substantially all the assets of
+an entity, or the power to direct its management and policies
+by vote, contract, or otherwise.  Control can be direct or
+indirect.
 
-## Interpretation
+**Your licenses** are all the licenses granted to you for the
+software under these terms.
 
-The words "licensor," "software," and "noncommercial purposes" are defined by the context. The word "you" means the individual or entity agreeing to these terms.
+**Use** means anything you do with the software requiring one
+of your licenses.

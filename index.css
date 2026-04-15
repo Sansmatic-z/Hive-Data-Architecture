@@ -1,85 +1,27 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-}
-
 body {
-  background: #09090b;
-  color: #fafafa;
-  min-height: 100vh;
-  overflow-x: hidden;
-  font-family: var(--font-sans);
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    background-color: #020617;
+    color: #f8fafc;
+    overflow-x: hidden;
 }
-
 .mono {
-  font-family: var(--font-mono);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
-
 .serif {
-  font-family: var(--font-serif);
+    font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
 }
-
-.glass-panel {
-  background: rgba(24, 24, 27, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.5);
+.hda-gradient {
+    background: linear-gradient(135deg, #0f172a 0%, #020617 100%);
 }
-
-.glass-panel-gold {
-  background: rgba(24, 24, 27, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(212, 175, 55, 0.2);
-  box-shadow: 0 4px 24px -4px rgba(212, 175, 55, 0.1);
+.honeycomb {
+    background-image: 
+        radial-gradient(circle at 2px 2px, rgba(99, 102, 241, 0.05) 1px, transparent 0);
+    background-size: 32px 32px;
+    animation: bg-shift 60s linear infinite;
 }
-
-.glossy-btn {
-  background: #18181b;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #fafafa;
-  transition: all 0.2s ease;
-}
-
-.glossy-btn:hover:not(:disabled) {
-  background: #27272a;
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateY(-1px);
-}
-
-.glossy-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.glossy-btn-gold {
-  background: #d4af37;
-  border: 1px solid #fde047;
-  color: #000;
-  transition: all 0.2s ease;
-}
-
-.glossy-btn-gold:hover:not(:disabled) {
-  background: #fde047;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(212, 175, 55, 0.3);
-}
-
-.glossy-btn-gold:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.text-gold {
-  color: #d4af37;
-}
-
-.bg-grid {
-  background-size: 40px 40px;
-  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+@keyframes bg-shift {
+    0% { background-position: 0 0; }
+    100% { background-position: 32px 32px; }
 }

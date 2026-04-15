@@ -40,11 +40,11 @@ This project is licensed under the **PolyForm Noncommercial License 1.0.0**.
 
 ## Attribution
 If you use HDA Vault in your research or projects, please provide proper credit.
-- **Citation**: See `CITATION.cff` for the recommended citation format.
+- **Citation**: See \`CITATION.cff\` for the recommended citation format.
 - **Copyright**: Copyright © 2026 Raj Mitra. All rights reserved.
 
 ## Contributing
-Please see `CONTRIBUTING.md` for our Contributor License Agreement (CLA) before submitting any changes.
+Please see \`CONTRIBUTING.md\` for our Contributor License Agreement (CLA) before submitting any changes.
 
 ## Commercial Licensing & Inquiries
 The **HDA Protocol** and **Hive Data Architecture** are proprietary innovations by Raj Mitra. 
@@ -57,4 +57,4 @@ If you are a commercial entity interested in:
 Please reach out to **Raj Mitra** directly at **r.8981718053@gmail.com**.
 
 ## Security Reporting
-To report vulnerabilities privately, please see `SECURITY.md`.
+To report vulnerabilities privately, please see \`SECURITY.md\`.

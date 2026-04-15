@@ -1,19 +1,17 @@
 {
-  "name": "hda-vault",
-  "private": true,
-  "version": "1.0.0",
+  "name": "hive-data-architecture-hda",
   "author": "Raj Mitra",
   "license": "PolyForm-Noncommercial-1.0.0",
+  "private": true,
+  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "preview": "vite preview"
   },
   "dependencies": {
     "clsx": "^2.1.1",
-    "fflate": "^0.8.2",
     "lucide-react": "^0.564.0",
     "motion": "^12.34.3",
     "react": "^19.2.4",

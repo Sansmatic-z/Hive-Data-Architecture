@@ -4,25 +4,7 @@ export interface FileMetadata {
   type: string;
   size: number;
   timestamp: number;
-  totalPages: number;
   isEncrypted?: boolean;
-}
-
-export interface GenerateHDAResult extends FileMetadata {
-  blob: Blob;
-  useFallback: boolean;
-}
-
-export interface EncodingResult {
-  dataUrl: string;
-  width: number;
-  height: number;
-  metadata: FileMetadata;
-}
-
-export interface DecodingResult {
-  blob: Blob;
-  metadata: FileMetadata;
 }
 
 export interface HDACell {
@@ -34,20 +16,7 @@ export interface HDACell {
   checksum: string; // SHA-256 fingerprint
 }
 
-export interface HDASpine {
-  version: number;
-  total_bytes: number;
-  cell_count: number;
-  compression: 'deflate' | 'none';
-  encryption: 'aes-256-gcm' | null;
-  cells: HDACell[];
-  filename?: string;
-  parallelism?: number;
-}
-
 export interface ProcessingProgress {
-  currentPage?: number;
-  totalPages?: number;
   percentage: number;
   status: string;
   logs?: string[];
