@@ -1,0 +1,19 @@
+{
+  "version": 9,
+  "total_bytes": 11,
+  "cell_count": 1,
+  "compression": "deflate",
+  "encryption": null,
+  "cells": [
+    {
+      "id": "C000",
+      "type": "binary",
+      "offset": 2097152,
+      "length": 11,
+      "compressed_length": 11,
+      "checksum": "abababababababab"
+    }
+  ],
+  "filename": "legacy.txt",
+  "mimeType": "text/plain"
+}

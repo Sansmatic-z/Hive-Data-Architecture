@@ -1,0 +1,48 @@
+{
+  "version": 10,
+  "total_bytes": 11,
+  "cell_count": 1,
+  "compression": "deflate",
+  "encryption": "aes-256-gcm",
+  "cells": [
+    {
+      "id": "C000",
+      "type": "binary",
+      "offset": 2097152,
+      "length": 11,
+      "compressed_length": 39,
+      "checksum": "abababababababab",
+      "compression": "deflate",
+      "sourceHash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    }
+  ],
+  "filename": "modern.txt",
+  "mimeType": "text/plain",
+  "creatorApp": "hda-vault/4.0",
+  "createdAt": "2026-04-27T00:00:00.000Z",
+  "sourceHash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "tags": ["txt"],
+  "compatibility": {
+    "current": 10,
+    "minReaderVersion": 9,
+    "supportedReaders": [9, 10],
+    "codecs": ["none", "deflate", "brotli", "zstd"]
+  },
+  "kdf": {
+    "algorithm": "PBKDF2-SHA256",
+    "iterations": 600000,
+    "hashLength": 32
+  },
+  "signature": {
+    "algorithm": "Ed25519",
+    "publicKey": "ZmFrZS1wdWJsaWM=",
+    "signedFieldsHash": "deadbeef",
+    "signature": "ZmFrZS1zaWduYXR1cmU="
+  },
+  "redundancy": {
+    "enabled": false,
+    "strategy": "mirror",
+    "parityCellIds": []
+  },
+  "split": null
+}

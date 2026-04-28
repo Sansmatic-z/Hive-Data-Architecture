@@ -1,5 +1,92 @@
-import { FileMetadata, HDACell } from '../types';
-import { deriveKey, encryptData } from './cryptoService';
+import {
+  EncoderResult,
+  HDACell,
+  HDACompression,
+  HDASpine,
+  OperationControlOptions,
+  ProgressCallback,
+  EncodeResumeCheckpoint,
+  ProcessingProgress,
+  HDAKdf,
+} from '../types';
+import { createLogger } from '../lib/logger';
+import { HDA_CONFIG } from '../config/hda';
+import { validateFile, validatePassword, sanitizeForHTML } from '../lib/validators';
+import {
+  HDA_FOOTER_SIZE,
+  assertMemoryFallbackSupported,
+  createRedundancyManifest,
+  createOperationId,
+  createResumeKey,
+  createSplitManifest,
+  estimateHeaderReserve,
+  escapeJSONForHTMLScript,
+  getAdaptiveTuning,
+  getFullHashHex,
+  getProtocolCompatibility,
+  shouldEnableRedundancy,
+  signManifestFields,
+} from '../lib/hdaProtocol';
+import { WorkerPool } from './workerPool';
+import { clearCheckpoint, getCheckpoint, setCheckpoint } from './resumeStore';
+import { logSecurityEvent } from '../lib/securityEvents';
+import { selectKdf, wrapSharedPasswordForRecipient } from './cryptoService';
+
+const logger = createLogger('hdaEncoder');
+
+// Protocol constants - must match decoder and embedded HTML decoder script
+const MAGIC_HDA = HDA_CONFIG.MAGIC_NUMBER;
+const VERSION = HDA_CONFIG.PROTOCOL_VERSION;
+
+async function ensureHandlePermission(handle: FileSystemFileHandle): Promise<boolean> {
+  const permissionHandle = handle as FileSystemFileHandle & {
+    queryPermission?: (descriptor?: { mode: 'read' | 'readwrite' }) => Promise<PermissionState>;
+    requestPermission?: (descriptor?: { mode: 'read' | 'readwrite' }) => Promise<PermissionState>;
+  };
+
+  if (!permissionHandle.queryPermission || !permissionHandle.requestPermission) {
+    return true;
+  }
+
+  const opts = { mode: 'readwrite' as const };
+  const status = await permissionHandle.queryPermission(opts);
+  if (status === 'granted') {
+    return true;
+  }
+
+  return (await permissionHandle.requestPermission(opts)) === 'granted';
+}
+
+function createSharedSecret(): string {
+  const runtimeCrypto = globalThis.crypto as Crypto | undefined;
+  if (runtimeCrypto && 'randomUUID' in runtimeCrypto && typeof runtimeCrypto.randomUUID === 'function') {
+    return `${runtimeCrypto.randomUUID()}:${Date.now().toString(36)}`;
+  }
+
+  const bytes = runtimeCrypto?.getRandomValues(new Uint8Array(16)) ?? new Uint8Array([Date.now() % 255]);
+  return `${Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('')}:${Date.now().toString(36)}`;
+}
+
+function buildSplitVolumes(
+  archiveBlob: Blob,
+  split: NonNullable<HDASpine['split']>,
+): EncoderResult['volumes'] {
+  if (!split.enabled) {
+    return undefined;
+  }
+
+  return split.volumes.map((volume) => {
+    const start = volume.index * split.volumeSize;
+    const end = Math.min(archiveBlob.size, start + split.volumeSize);
+    return {
+      index: volume.index,
+      total: split.volumeCount,
+      name: volume.name,
+      blob: archiveBlob.slice(start, end, 'application/octet-stream'),
+      role: volume.includesManifest ? 'manifest' : 'data',
+    };
+  });
+}
 
 /**
  * HDA Encoder - Honeycomb Document Architecture
@@ -11,147 +98,400 @@ import { deriveKey, encryptData } from './cryptoService';
  * - File System Access API (Stream to Disk)
  */
 
-const MAGIC_HDA = 0x48444121;
-const VERSION = 9;
-const CELL_SIZE = 1024 * 1024 * 50; // 50MB Cells for massive files
-const HEADER_SIZE = 1024 * 1024 * 2; // 2MB reserved for HTML + Spine
-
-async function getChecksum(data: ArrayBuffer): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
-}
-
 export const generateHDA = async (
   file: File,
   password: string | null,
-  onProgress: (p: any) => void
-): Promise<FileMetadata | null> => {
+  onProgress: ProgressCallback,
+  options: OperationControlOptions = {},
+): Promise<EncoderResult | null> => {
+  logger.info('Starting HDA encoding', { filename: file.name, size: file.size, encrypted: !!password });
+
+  const validatedFile = validateFile(file);
+  const validatedPassword = options.integrityOnly ? null : validatePassword(password);
+  const tuning = getAdaptiveTuning(validatedFile);
+  const resumeKey = options.resumeKey ?? createResumeKey(file, 'ENCODE');
+  const existingCheckpoint = await getCheckpoint<EncodeResumeCheckpoint>(resumeKey);
+  const checkpoint =
+    existingCheckpoint &&
+    existingCheckpoint.fileName === file.name &&
+    existingCheckpoint.fileSize === file.size &&
+    existingCheckpoint.fileLastModified === file.lastModified
+      ? existingCheckpoint
+      : null;
+  const operationId = checkpoint?.operationId ?? createOperationId('enc');
+  const isResumed = !!checkpoint;
+
   let handle: FileSystemFileHandle | null = null;
   let useFallback = false;
+  let createdHandle = false;
 
-  if ('showSaveFilePicker' in window) {
+  if (checkpoint?.fileHandle) {
+    if (await ensureHandlePermission(checkpoint.fileHandle)) {
+      handle = checkpoint.fileHandle;
+      useFallback = false;
+    } else {
+      useFallback = true;
+    }
+  } else if ('showSaveFilePicker' in window) {
     try {
       handle = await (window as any).showSaveFilePicker({
-        suggestedName: `${file.name}.hda.html`,
+        suggestedName: `${validatedFile.name}.hda.html`,
         types: [{
           description: 'HDA Vault',
           accept: { 'text/html': ['.html'] },
         }],
       });
-    } catch (err: any) {
-      if (err.name === 'AbortError') return null;
-      console.warn("showSaveFilePicker failed, falling back to memory blob", err);
+      createdHandle = true;
+      logger.debug('File handle acquired via File System Access API');
+    } catch (err: unknown) {
+      const error = err as Error;
+      if (error.name === 'AbortError') {
+        logger.info('User cancelled file picker');
+        return null;
+      }
+      logger.warn("showSaveFilePicker failed, falling back to memory blob", { error: error.message });
       useFallback = true;
     }
   } else {
+    logger.info('File System Access API not available, using memory fallback');
     useFallback = true;
   }
 
-  const writable = handle ? await handle.createWritable() : null;
-  const blobParts: Blob[] = [];
-  const isEncrypted = !!password;
-  const cells: HDACell[] = [];
-  const logs: string[] = [`[INIT] Protocol 3.0 Engage`, `[FILE] ${file.name}`];
-  
-  let currentOffset = HEADER_SIZE;
-  let totalProcessed = 0;
-
-  onProgress({ percentage: 0, status: 'Allocating space...', logs: [...logs, '[SYS] Requesting disk allocation...'] });
-
-  // 1. Reserve 2MB for the HTML header
-  const placeholder = new Uint8Array(HEADER_SIZE);
-  placeholder.fill(32); // Fill with spaces
-  if (writable) {
-    await writable.write(placeholder);
-  } else {
-    blobParts.push(new Blob([placeholder]));
-  }
-
-  // 2. Process the file in chunks
-  while (totalProcessed < file.size) {
-    const chunk = file.slice(totalProcessed, totalProcessed + CELL_SIZE);
-    const cs = new CompressionStream('deflate');
-    const writer = cs.writable.getWriter();
-    writer.write(await chunk.arrayBuffer());
-    writer.close();
-    
-    let cellData = new Uint8Array(await new Response(cs.readable).arrayBuffer());
-    const cellId = `C${cells.length.toString().padStart(3, '0')}`;
-    
-    // Integrity Fingerprint
-    const checksum = await getChecksum(cellData.buffer);
-
-    if (isEncrypted && password) {
-      const salt = window.crypto.getRandomValues(new Uint8Array(16));
-      const iv = window.crypto.getRandomValues(new Uint8Array(12));
-      const key = await deriveKey(password, salt);
-      const encrypted = await encryptData(cellData.buffer, key, iv);
-      const packed = new Uint8Array(16 + 12 + encrypted.byteLength);
-      packed.set(salt, 0);
-      packed.set(iv, 16);
-      packed.set(new Uint8Array(encrypted), 28);
-      cellData = packed;
-    }
-
-    cells.push({
-      id: cellId,
-      type: 'binary',
-      offset: currentOffset,
-      length: chunk.size,
-      compressed_length: cellData.length,
-      checksum
+  const writable = handle
+    ? await handle.createWritable(isResumed ? { keepExistingData: true } : undefined)
+    : null;
+  const blobParts: Blob[] = checkpoint?.blobParts ? [...checkpoint.blobParts] : [];
+  const recipientInputs = [
+    ...(validatedPassword && (options.recipients ?? []).length > 0
+      ? [{ label: 'primary', password: validatedPassword, preferredKdf: options.preferredKdf }]
+      : []),
+    ...((options.recipients ?? []).filter((recipient) => recipient.password.trim().length > 0)),
+  ];
+  const sharedPassword =
+    recipientInputs.length > 0
+      ? createSharedSecret()
+      : validatedPassword;
+  const isEncrypted = !!sharedPassword;
+  const estimatedCellCount = Math.max(1, Math.ceil(file.size / tuning.cellSize));
+  const headerSize =
+    checkpoint?.headerSize ??
+    estimateHeaderReserve({
+      fileName: validatedFile.name,
+      fileType: validatedFile.type,
+      fileSize: file.size,
+      cellCount: estimatedCellCount,
+      encrypted: isEncrypted,
+      metadataBytes:
+        (options.archiveComment?.length ?? 0) +
+        (options.passwordHint?.length ?? 0) +
+        (options.archiveTags ?? []).join(',').length,
+      recipientCount: recipientInputs.length,
+      folderEntryCount: options.folderMetadata?.entries.length ?? 0,
     });
+  const cells: HDACell[] = checkpoint?.cells ? [...checkpoint.cells] : [];
+  const logs: string[] = [`[INIT] Protocol ${HDA_CONFIG.DISPLAY_VERSION} Engage`, `[FILE] ${validatedFile.name}`];
+  const compressionMode = checkpoint?.tuning.compression ?? tuning.compression;
+  const workerCount = checkpoint?.tuning.workerCount ?? tuning.workerCount;
+  const cellSize = checkpoint?.tuning.cellSize ?? tuning.cellSize;
+  const useRedundancy = shouldEnableRedundancy(file.size);
+  const parityCellIds: string[] = [];
 
-    // Write chunk directly to disk or memory
-    if (writable) {
-      await writable.write(cellData);
-    } else {
-      blobParts.push(new Blob([cellData]));
-    }
-    
-    currentOffset += cellData.length;
-    totalProcessed += chunk.size;
+  if (!writable) {
+    assertMemoryFallbackSupported(file.size);
+  }
 
-    logs.push(`[FORGE] ${cellId}: ${checksum} OK`);
-    if (logs.length > 8) logs.shift();
+  let currentOffset = checkpoint?.currentOffset ?? headerSize;
+  let totalProcessed = checkpoint?.processedBytes ?? 0;
+  let writeClosed = false;
+  let archiveKdf: HDAKdf | null = checkpoint?.cells.length ? null : null;
+  const startedAt = performance.now();
+  const workerPool = new WorkerPool<
+    {
+      type: 'encode-cell';
+      buffer: ArrayBuffer;
+      compression: HDACompression;
+      password: string | null;
+      kdf?: HDAKdf | null;
+    },
+    { type: 'encode-cell'; buffer: ArrayBuffer; checksum: string; compression: HDACompression; sourceHash: string; kdf: HDAKdf | null }
+  >(workerCount, () => new Worker(new URL('./hdaWorker.ts', import.meta.url), { type: 'module' }));
 
-    onProgress({ 
-      percentage: Math.round((totalProcessed / file.size) * 95), 
-      status: `Forging Cell ${cells.length}...`,
-      logs: [...logs]
+  const emitProgress = (progress: ProcessingProgress) => {
+    const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
+    const throughputBytesPerSecond = totalProcessed / elapsedSeconds;
+    const remainingBytes = Math.max(file.size - totalProcessed, 0);
+    const etaSeconds =
+      throughputBytesPerSecond > 0 ? remainingBytes / throughputBytesPerSecond : null;
+
+    onProgress({
+      ...progress,
+      totalBytes: file.size,
+      processedBytes: totalProcessed,
+      currentCell: cells.length,
+      totalCells: Math.max(cells.length, Math.ceil(file.size / cellSize)),
+      throughputBytesPerSecond,
+      etaSeconds,
+      mode: writable ? 'disk' : 'memory',
+      cellSize,
+      workerCount,
+      operationId,
+      isResumable: true,
+      resumed: isResumed,
     });
-  }
-
-  // 3. Write Footer
-  onProgress({ percentage: 95, status: 'Writing footer...', logs: [...logs, '[SYS] Finalizing binary layout...'] });
-  const footerBuffer = new ArrayBuffer(16);
-  const footerView = new DataView(footerBuffer);
-  footerView.setBigUint64(0, BigInt(HEADER_SIZE), true);
-  footerView.setUint32(8, MAGIC_HDA, true);
-  footerView.setUint32(12, VERSION, true);
-  if (writable) {
-    await writable.write(footerBuffer);
-  } else {
-    blobParts.push(new Blob([footerBuffer]));
-  }
-
-  // 4. Generate HTML and Spine
-  onProgress({ percentage: 98, status: 'Injecting Spine...', logs: [...logs, '[SYS] Rewriting HTML header...'] });
-  const spine: any = {
-    version: VERSION,
-    total_bytes: file.size,
-    cell_count: cells.length,
-    compression: 'deflate',
-    encryption: isEncrypted ? 'aes-256-gcm' : null,
-    cells: cells,
-    filename: file.name,
-    mimeType: file.type || 'application/octet-stream'
   };
 
-  const primaryColor = isEncrypted ? '#f59e0b' : '#6366f1';
-  
-  const htmlHeader = `<!DOCTYPE html>
+  try {
+    if (options.signal?.aborted) {
+      throw new DOMException('Operation cancelled.', 'AbortError');
+    }
+
+    if (sharedPassword && !archiveKdf) {
+      archiveKdf = await selectKdf(options.preferredKdf ?? 'PBKDF2-SHA256');
+    }
+
+    emitProgress({
+      percentage: Math.round((totalProcessed / Math.max(file.size, 1)) * 100),
+      stage: 'initializing',
+      status: isResumed ? 'Resuming operation...' : 'Allocating space...',
+      logs: [...logs, isResumed ? '[SYS] Resume checkpoint detected.' : '[SYS] Requesting disk allocation...'],
+    });
+
+    // 1. Reserve exact header space for the HTML wrapper
+    if (!isResumed) {
+      const placeholder = new Uint8Array(headerSize);
+      placeholder.fill(32); // Fill with spaces
+      if (writable) {
+        await writable.write(placeholder);
+      } else {
+        blobParts.push(new Blob([placeholder]));
+      }
+    }
+
+    if (writable && isResumed) {
+      await writable.seek(currentOffset);
+    }
+
+    await setCheckpoint({
+      operationId,
+      resumeKey,
+      mode: 'ENCODE',
+      fileName: file.name,
+      fileSize: file.size,
+      fileLastModified: file.lastModified,
+      passwordHashHint: sharedPassword ? `${sharedPassword.length}:${sharedPassword.charCodeAt(0)}` : null,
+      updatedAt: Date.now(),
+      processedBytes: totalProcessed,
+      totalBytes: file.size,
+      nextCellIndex: cells.length,
+      tuning: { cellSize, workerCount, compression: compressionMode },
+      headerSize,
+      cells,
+      blobParts: writable ? undefined : blobParts,
+      currentOffset,
+      isEncrypted,
+      fileHandle: handle,
+      sourceFileHandle: options.sourceFileHandle ?? checkpoint?.sourceFileHandle ?? null,
+    });
+
+    // 2. Process the file in chunks
+    while (totalProcessed < file.size) {
+      if (options.signal?.aborted) {
+        throw new DOMException('Operation cancelled.', 'AbortError');
+      }
+
+      const chunk = file.slice(totalProcessed, totalProcessed + cellSize);
+      emitProgress({
+        percentage: Math.round((totalProcessed / file.size) * 95),
+        stage: 'preparing',
+        status: `Preparing Cell ${cells.length + 1}...`,
+        logs: [...logs, `[CELL] ${cells.length + 1}: dispatching to ${workerCount} worker${workerCount === 1 ? '' : 's'}...`],
+      });
+
+      const cellId = `C${cells.length.toString().padStart(3, '0')}`;
+      const cellBuffer = await chunk.arrayBuffer();
+
+      const workerResult = await workerPool.run(
+        {
+          type: 'encode-cell',
+          buffer: cellBuffer,
+          compression: compressionMode,
+          password: sharedPassword,
+          kdf: archiveKdf,
+        },
+        [cellBuffer],
+      );
+      const cellData = new Uint8Array(workerResult.buffer);
+      const checksum = workerResult.checksum;
+      const actualCompression = workerResult.compression;
+      archiveKdf = archiveKdf ?? workerResult.kdf;
+
+      cells.push({
+        id: cellId,
+        type: 'binary',
+        offset: currentOffset,
+        length: chunk.size,
+        compressed_length: cellData.length,
+        checksum,
+        compression: actualCompression,
+        sourceHash: workerResult.sourceHash,
+      });
+
+      if (writable) {
+        await writable.write(cellData);
+      } else {
+        blobParts.push(new Blob([cellData]));
+      }
+
+      currentOffset += cellData.length;
+      totalProcessed += chunk.size;
+
+      if (useRedundancy) {
+        const parityId = `P${parityCellIds.length.toString().padStart(3, '0')}`;
+        const parityData = new Uint8Array(cellData);
+        cells.push({
+          id: parityId,
+          type: 'binary',
+          offset: currentOffset,
+          length: chunk.size,
+          compressed_length: parityData.length,
+          checksum,
+          compression: actualCompression,
+          isParity: true,
+          parityFor: cellId,
+          sourceHash: workerResult.sourceHash,
+        });
+        parityCellIds.push(parityId);
+
+        if (writable) {
+          await writable.write(parityData);
+        } else {
+          blobParts.push(new Blob([parityData]));
+        }
+        currentOffset += parityData.length;
+      }
+
+      logs.push(`[FORGE] ${cellId}: ${checksum} OK`);
+      if (logs.length > HDA_CONFIG.MAX_LOG_ENTRIES) logs.shift();
+
+      await setCheckpoint({
+        operationId,
+        resumeKey,
+        mode: 'ENCODE',
+        fileName: file.name,
+        fileSize: file.size,
+        fileLastModified: file.lastModified,
+        passwordHashHint: sharedPassword ? `${sharedPassword.length}:${sharedPassword.charCodeAt(0)}` : null,
+        updatedAt: Date.now(),
+        processedBytes: totalProcessed,
+        totalBytes: file.size,
+        nextCellIndex: cells.length,
+        tuning: { cellSize, workerCount, compression: compressionMode },
+        headerSize,
+        cells: [...cells],
+        blobParts: writable ? undefined : [...blobParts],
+        currentOffset,
+        isEncrypted,
+        fileHandle: handle,
+        sourceFileHandle: options.sourceFileHandle ?? checkpoint?.sourceFileHandle ?? null,
+      });
+
+      emitProgress({
+        percentage: Math.round((totalProcessed / file.size) * 95),
+        stage: 'processing',
+        status: `Forging Cell ${cells.length}...`,
+        logs: [...logs],
+      });
+    }
+
+    // 3. Write Footer
+    emitProgress({
+      percentage: 95,
+      stage: 'finalizing',
+      status: 'Writing footer...',
+      logs: [...logs, '[SYS] Finalizing binary layout...'],
+    });
+    const footerBuffer = new ArrayBuffer(HDA_FOOTER_SIZE);
+    const footerView = new DataView(footerBuffer);
+    footerView.setBigUint64(0, BigInt(headerSize), true);
+    footerView.setUint32(8, MAGIC_HDA, true);
+    footerView.setUint32(12, VERSION, true);
+    if (writable) {
+      await writable.write(footerBuffer);
+    } else {
+      blobParts.push(new Blob([footerBuffer]));
+    }
+
+    // 4. Generate HTML and Spine
+    emitProgress({
+      percentage: 98,
+      stage: 'finalizing',
+      status: 'Injecting Spine...',
+      logs: [...logs, '[SYS] Rewriting HTML header...'],
+    });
+    const compatibility = getProtocolCompatibility();
+    const sourceHash = await getFullHashHex(
+      cells
+        .filter((cell) => !cell.isParity)
+        .map((cell) => cell.sourceHash ?? '')
+        .join('|'),
+    );
+    const splitManifest = createSplitManifest(cells, validatedFile.name, headerSize);
+    const recipients =
+      recipientInputs.length > 0
+        ? await Promise.all(
+            recipientInputs.map((recipient) =>
+              wrapSharedPasswordForRecipient(
+                sharedPassword!,
+                recipient.password,
+                recipient.label,
+                recipient.preferredKdf,
+              ),
+            ),
+          )
+        : null;
+    const unsignedManifest = {
+      version: HDA_CONFIG.PROTOCOL_VERSION,
+      total_bytes: file.size,
+      cell_count: cells.length,
+      compression:
+        new Set(cells.map((cell) => cell.compression ?? compressionMode)).size === 1
+          ? (cells[0]?.compression ?? compressionMode)
+          : 'none',
+      encryption: isEncrypted ? 'aes-256-gcm' as const : null,
+      cells,
+      filename: validatedFile.name,
+      mimeType: validatedFile.type || 'application/octet-stream',
+      comment: options.archiveComment ?? '',
+      passwordHint: options.passwordHint ?? undefined,
+      creatorApp: `hda-vault/${HDA_CONFIG.DISPLAY_VERSION}`,
+      createdAt: new Date().toISOString(),
+      sourceHash,
+      tags: Array.from(
+        new Set([
+          validatedFile.name.split('.').pop()?.toLowerCase(),
+          ...(options.archiveTags ?? []),
+        ].filter(Boolean)),
+      ) as string[],
+      integrityOnly: !!options.integrityOnly,
+      folderManifest: options.folderMetadata ?? null,
+      recipients,
+      compatibility,
+      kdf: archiveKdf,
+      redundancy: createRedundancyManifest(parityCellIds),
+      split: splitManifest,
+    };
+    const signature = await signManifestFields(JSON.stringify(unsignedManifest));
+    const spine: HDASpine = {
+      ...unsignedManifest,
+      signature,
+    };
+
+    const primaryColor = isEncrypted ? '#f59e0b' : '#6366f1';
+
+    // XSS-safe: sanitize all user-provided values before HTML embedding
+    const safeFilename = sanitizeForHTML(validatedFile.name);
+
+    const htmlHeader = `<!DOCTYPE html>
 <!--
   HDA Forge | Hive Data Architecture
   Created by Raj Mitra
@@ -164,7 +504,7 @@ export const generateHDA = async (
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="author" content="Raj Mitra">
-    <title>HDA Forge | ${file.name.replace(/</g, '&lt;')}</title>
+    <title>HDA Forge | ${safeFilename}</title>
     <style>
         body { background: #020617; color: #f8fafc; font-family: ui-sans-serif, system-ui, sans-serif; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; margin: 0; }
         .glass { background: rgba(10, 15, 30, 0.95); backdrop-filter: blur(40px); border: 1px solid rgba(255,255,255,0.08); width: 100%; max-width: 480px; padding: 40px; border-radius: 48px; position: relative; z-index: 10; box-shadow: 0 50px 100px -20px rgba(0,0,0,0.9); border-top: 10px solid ${primaryColor}; }
@@ -259,7 +599,7 @@ export const generateHDA = async (
                    <div id="tab-unpack" class="tab-btn tab-active uppercase tracking-tighter">Unpack</div>
                    <div id="tab-pass" class="tab-btn uppercase tracking-tighter opacity-50">Passport</div>
                 </div>
-                <div class="text-9px mono text-slate-500 uppercase tracking-widest">Protocol v3.0</div>
+                <div class="text-9px mono text-slate-500 uppercase tracking-widest">Protocol v4.0</div>
             </div>
 
             <div id="view-unpack" class="space-y-6">
@@ -271,7 +611,7 @@ export const generateHDA = async (
                 </div>
                 
                 <div class="bg-slate-950 p-6 rounded-3xl border border-slate-900 text-left space-y-3 shadow-inner">
-                    <div class="text-sm font-bold text-slate-200 break-all leading-snug">${file.name.replace(/</g, '&lt;')}</div>
+                    <div class="text-sm font-bold text-slate-200 break-all leading-snug">${safeFilename}</div>
                     <div class="flex justify-between items-center text-11px mono text-slate-500">
                         <span>${(file.size / (1024 * 1024)).toFixed(2)} MB</span>
                         <span class="text-indigo-400 font-bold">${spine.cell_count} CELLS</span>
@@ -283,7 +623,7 @@ export const generateHDA = async (
                 </div>
 
                 <div id="terminal" class="terminal mono text-left">
-                   <div>[INIT] Forge Terminal v3.0 Ready...</div>
+                   <div>[INIT] Forge Terminal v4.0 Ready...</div>
                    <div>[SCAN] ${spine.cell_count} Cells Detected...</div>
                 </div>
 
@@ -309,11 +649,14 @@ export const generateHDA = async (
 
             <div id="view-passport" class="hidden space-y-4 text-left">
                 <div class="bg-slate-950 p-6 rounded-3xl border border-slate-800 mono text-10px space-y-4">
-                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">SIGNATURE</span> <span class="text-emerald-400">VERIFIED</span></div>
-                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">CHUNKS</span> <span>${spine.cell_count} Cells (${(CELL_SIZE / 1024 / 1024).toFixed(0)}MB)</span></div>
+                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">SIGNATURE</span> <span>${spine.signature ? 'SIGNED' : 'UNSIGNED'}</span></div>
+                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">CHUNKS</span> <span>${spine.cell_count} Cells (${(cellSize / 1024 / 1024).toFixed(0)}MB)</span></div>
                     <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">ENCRYPTION</span> <span>${spine.encryption || 'NONE'}</span></div>
+                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">KDF</span> <span>${spine.kdf?.algorithm ?? 'PBKDF2-SHA256'}</span></div>
                     <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">INTEGRITY</span> <span>SHA-256 CHECKED</span></div>
-                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">VERSION</span> <span>STABLE 3.0.0</span></div>
+                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">VERSION</span> <span>STABLE 4.0.0</span></div>
+                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">CREATED</span> <span>${spine.createdAt ?? 'UNKNOWN'}</span></div>
+                    <div class="flex justify-between border-b border-slate-900 pb-2"><span class="text-slate-500">SOURCE HASH</span> <span>${spine.sourceHash ?? 'N/A'}</span></div>
                     <div class="pt-2 text-slate-600 italic">Self-aware HDA archive container. Requires no external dependencies for reconstruction.</div>
                     <div class="pt-4 mt-4 border-t border-slate-900 text-center">
                         <div class="text-indigo-400 font-bold text-10px uppercase tracking-widest">Created by Raj Mitra</div>
@@ -324,7 +667,7 @@ export const generateHDA = async (
         </div>
     </div>
 
-    <script id="spine-node" type="application/hda-spine">${JSON.stringify(spine)}</script>
+    <script id="spine-node" type="application/hda-spine">${escapeJSONForHTMLScript(spine)}</script>
 
     <script>
         const spine = JSON.parse(document.getElementById('spine-node').textContent);
@@ -382,27 +725,43 @@ export const generateHDA = async (
                     useFallback = true;
                 }
 
+                if (useFallback && spine.total_bytes > ${HDA_CONFIG.MAX_FALLBACK_SIZE} && window.self !== window.top) {
+                    throw new Error('Memory limit exceeded. Please open the app in a new tab to enable direct-to-disk streaming.');
+                }
+                if (useFallback && spine.total_bytes > ${HDA_CONFIG.MAX_FALLBACK_SIZE}) {
+                    console.warn('Memory fallback advisory threshold exceeded (${(HDA_CONFIG.MAX_FALLBACK_SIZE / (1024 * 1024 * 1024)).toFixed(1)} GB). Continuing in top-level window.');
+                }
+
                 btn.disabled = true;
                 btn.style.opacity = '0.5';
                 
                 const blobParts = useFallback ? new Array(spine.cells.length) : null;
 
-                const footerBlob = handle.slice(-16);
+                const footerBlob = handle.slice(-${HDA_FOOTER_SIZE});
                 const footer = new DataView(await footerBlob.arrayBuffer());
                 const binaryStart = Number(footer.getBigUint64(0, true));
+                const magic = footer.getUint32(8, true);
+                const version = footer.getUint32(12, true);
+                if (magic !== ${MAGIC_HDA}) throw new Error('Invalid HDA footer');
+                if (version !== ${VERSION}) throw new Error('Unsupported HDA version: ' + version);
+
+                if (spine.cell_count !== spine.cells.length) {
+                    throw new Error('Spine metadata mismatch');
+                }
+                if (spine.version !== ${VERSION}) {
+                    throw new Error('Unsupported HDA spine version: ' + spine.version);
+                }
 
                 // PARALLELISM AUTO-OPTIMIZATION
                 const cores = navigator.hardwareConcurrency || 2;
                 const poolSize = Math.max(1, Math.min(cores - 1, 8)); // Reserve 1 core for UI, max 8
                 log('Parallel scaling: ' + poolSize + 'X Threading');
 
-                let ptr = binaryStart;
-                
-                // Construct Cell Offsets
-                const cellTasks = spine.cells.map((cell, i) => {
-                    const task = { index: i, cell, start: ptr };
-                    ptr += cell.compressed_length;
-                    return task;
+                let nextOffset = binaryStart;
+                const cellTasks = spine.cells.filter((cell) => !cell.isParity).map((cell, i) => {
+                    const start = Number.isFinite(cell.offset) && cell.offset >= binaryStart ? cell.offset : nextOffset;
+                    nextOffset = start + cell.compressed_length;
+                    return { index: i, cell, start };
                 });
 
                 let finished = 0;
@@ -412,31 +771,65 @@ export const generateHDA = async (
                     
                     const batchResults = await Promise.all(batchTasks.map(async (task) => {
                         const { index, cell, start } = task;
-                        const cellBlob = handle.slice(start, start + cell.compressed_length);
-                        let buffer = await cellBlob.arrayBuffer();
+                        const decodeCandidate = async (candidate) => {
+                            const candidateStart = candidate.offset ?? start;
+                            const cellBlob = handle.slice(candidateStart, candidateStart + candidate.compressed_length);
+                            let buffer = await cellBlob.arrayBuffer();
 
-                        if (spine.encryption) {
-                            const salt = new Uint8Array(buffer.slice(0, 16));
-                            const iv = new Uint8Array(buffer.slice(16, 28));
-                            const data = buffer.slice(28);
-                            const enc = new TextEncoder();
-                            const keyMat = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
-                            const key = await crypto.subtle.deriveKey(
-                                { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
-                                keyMat, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
-                            );
-                            buffer = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+                            if (spine.encryption) {
+                                if (spine.recipients?.length) {
+                                    throw new Error('This archive uses multi-recipient access. Open it in the HDA app for extraction.');
+                                }
+                                if (spine.kdf && spine.kdf.algorithm === 'Argon2id') {
+                                    throw new Error('This archive uses Argon2id. Open it in the HDA app for extraction.');
+                                }
+                                const salt = new Uint8Array(buffer.slice(0, 16));
+                                const iv = new Uint8Array(buffer.slice(16, 28));
+                                const data = buffer.slice(28);
+                                const enc = new TextEncoder();
+                                const keyMat = await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
+                                const key = await crypto.subtle.deriveKey(
+                                    { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
+                                    keyMat, { name: 'AES-GCM', length: 256 }, false, ['decrypt']
+                                );
+                                buffer = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+                            }
+
+                            const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+                            const actualChecksum = Array.from(new Uint8Array(hashBuffer))
+                                .map((b) => b.toString(16).padStart(2, '0'))
+                                .join('')
+                                .substring(0, ${HDA_CONFIG.CHECKSUM_LENGTH});
+                            if (actualChecksum !== candidate.checksum) {
+                                throw new Error('Integrity Breach: Cell ' + index + ' checksum mismatch.');
+                            }
+
+                            let resBuffer = buffer;
+                            const codec = candidate.compression || spine.compression;
+                            if (codec !== 'none') {
+                                if (!['deflate', 'brotli', 'zstd'].includes(codec)) {
+                                    throw new Error('Unsupported codec: ' + codec);
+                                }
+                                const ds = new DecompressionStream(codec);
+                                const dsWriter = ds.writable.getWriter();
+                                await dsWriter.write(buffer);
+                                await dsWriter.close();
+                                
+                                const resBlob = await new Response(ds.readable).blob();
+                                resBuffer = await resBlob.arrayBuffer();
+                            }
+                            return { index, buffer: resBuffer, checksum: actualChecksum };
+                        };
+
+                        try {
+                            return await decodeCandidate(cell);
+                        } catch (error) {
+                            const parity = spine.cells.find((candidate) => candidate.parityFor === cell.id);
+                            if (parity) {
+                                return await decodeCandidate(parity);
+                            }
+                            throw error;
                         }
-
-                        // INTEGRITY SHIELD: Pre-decompression Hash Check
-                        const ds = new DecompressionStream('deflate');
-                        const dsWriter = ds.writable.getWriter();
-                        dsWriter.write(buffer);
-                        dsWriter.close();
-                        
-                        const resBlob = await new Response(ds.readable).blob();
-                        const resBuffer = await resBlob.arrayBuffer();
-                        return { index, buffer: resBuffer };
                     }));
 
                     for (const res of batchResults) {
@@ -448,7 +841,7 @@ export const generateHDA = async (
                         finished++;
                         status.textContent = 'RESTORE ' + finished + '/' + spine.cell_count;
                         bar.style.width = (finished / spine.cell_count * 100) + '%';
-                        log('Cell ' + res.index + ' verified OK');
+                        log('Cell ' + res.index + ' verified OK [' + res.checksum + ']');
                     }
                 }
 
@@ -515,46 +908,89 @@ export const generateHDA = async (
 </body>
 </html>`;
 
-  const htmlEncoder = new TextEncoder();
-  const htmlBytes = htmlEncoder.encode(htmlHeader);
+    const htmlEncoder = new TextEncoder();
+    const htmlBytes = htmlEncoder.encode(htmlHeader);
 
-  if (htmlBytes.byteLength > HEADER_SIZE) {
-      if (writable) await writable.close();
-      throw new Error("Metadata too large for allocated header space.");
-  }
-
-  // Pad the HTML to exactly HEADER_SIZE
-  const paddedHtml = new Uint8Array(HEADER_SIZE);
-  paddedHtml.fill(32); // fill with spaces
-  paddedHtml.set(htmlBytes, 0);
-
-  if (writable) {
-    // Seek back to 0 and overwrite
-    await writable.seek(0);
-    await writable.write(paddedHtml);
-    await writable.close();
-  } else {
-    blobParts[0] = new Blob([paddedHtml]);
-  }
-
-  onProgress({ percentage: 100, status: 'Seal Complete.', logs: [...logs, '[SEAL] Hive Locked.'] });
-  
-  const finalBlob = useFallback ? new Blob(blobParts) : new Blob();
-  if (useFallback && finalBlob.size === 0 && file.size > 0) {
-    if (window.self !== window.top) {
-      throw new Error("Memory limit exceeded. Please open the app in a new tab to enable direct-to-disk streaming.");
-    } else {
-      throw new Error("Browser memory limit exceeded. Your browser cannot hold this file in memory, and does not support direct-to-disk streaming (or permission was denied). Try using Chrome or Edge.");
+    if (htmlBytes.byteLength > headerSize) {
+        if (writable) {
+          await writable.close();
+          writeClosed = true;
+        }
+        throw new Error(`Metadata too large for allocated header space (${headerSize} bytes).`);
     }
-  }
 
-  return {
-    blob: finalBlob,
-    useFallback,
-    name: file.name,
-    type: "text/html",
-    size: currentOffset + 16, // Total file size
-    timestamp: Date.now(),
-    isEncrypted
-  } as any;
+    // Pad the HTML to exactly headerSize
+    const paddedHtml = new Uint8Array(headerSize);
+    paddedHtml.fill(32); // fill with spaces
+    paddedHtml.set(htmlBytes, 0);
+
+    if (writable) {
+      // Seek back to 0 and overwrite
+      await writable.seek(0);
+      await writable.write(paddedHtml);
+      await writable.close();
+      writeClosed = true;
+    } else {
+      blobParts[0] = new Blob([paddedHtml]);
+    }
+
+    emitProgress({
+      percentage: 100,
+      stage: 'complete',
+      status: 'Seal Complete.',
+      logs: [...logs, '[SEAL] Hive Locked.'],
+    });
+
+    const finalBlob = useFallback ? new Blob(blobParts) : new Blob();
+    if (useFallback && finalBlob.size === 0 && file.size > 0) {
+      if (window.self !== window.top) {
+        throw new Error("Memory limit exceeded. Please open the app in a new tab to enable direct-to-disk streaming.");
+      } else {
+        throw new Error("Browser memory limit exceeded. Your browser cannot hold this file in memory, and does not support direct-to-disk streaming (or permission was denied). Try using Chrome or Edge.");
+      }
+    }
+
+    await clearCheckpoint(resumeKey);
+      workerPool.terminate('Operation completed.');
+    const volumes = useFallback && splitManifest?.enabled
+      ? buildSplitVolumes(finalBlob, splitManifest)
+      : undefined;
+    return {
+      blob: volumes?.[0]?.blob ?? finalBlob,
+      useFallback,
+      name: file.name,
+      type: "text/html",
+      size: currentOffset + HDA_FOOTER_SIZE,
+      timestamp: Date.now(),
+      isEncrypted,
+      volumes,
+      protocolVersion: HDA_CONFIG.PROTOCOL_VERSION,
+    };
+  } catch (error) {
+    if (error instanceof Error && /permission/i.test(error.message)) {
+      logSecurityEvent({
+        code: 'file_permission_denied',
+        message: 'Output file handle permission denied during encode.',
+        data: { fileName: file.name },
+      });
+    }
+    workerPool.terminate(
+      error instanceof DOMException && error.name === 'AbortError'
+        ? 'Operation cancelled.'
+        : 'Operation failed.',
+    );
+    if (writable && !writeClosed) {
+      try {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          await writable.close();
+          writeClosed = true;
+        } else {
+          await writable.abort();
+        }
+      } catch {
+        // Ignore cleanup failures.
+      }
+    }
+    throw error;
+  }
 };

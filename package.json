@@ -3,15 +3,38 @@
   "author": "Raj Mitra",
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
-  "version": "0.0.0",
+  "version": "4.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "test:e2e": "playwright test",
+    "test:fuzz": "vitest run __tests__/fuzz.test.ts",
+    "test:property": "vitest run __tests__/property.test.ts",
+    "benchmark": "node scripts/benchmark-hda.mjs",
+    "benchmark:check": "node scripts/check-benchmark.mjs",
+    "cli:inspect": "node cli/hda-cli.mjs inspect",
+    "cli:verify": "node cli/hda-cli.mjs verify",
+    "ci": "npm run test:run && npm run typecheck && npm run build && npm run benchmark:check",
+    "docker:smoke": "node scripts/docker-smoke.mjs"
+  },
+  "bin": {
+    "hda-cli": "./cli/hda-cli.mjs"
+  },
+  "exports": {
+    "./sdk": "./sdk/index.ts"
   },
   "dependencies": {
+    "brotli-wasm": "^3.0.1",
     "clsx": "^2.1.1",
+    "fflate": "^0.8.2",
+    "hash-wasm": "^4.12.0",
     "lucide-react": "^0.564.0",
     "motion": "^12.34.3",
     "react": "^19.2.4",
@@ -19,11 +42,21 @@
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/vite": "^4.2.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
+    "fast-check": "^4.7.0",
+    "happy-dom": "^20.9.0",
+    "jsdom": "^29.0.2",
     "tailwindcss": "^4.2.1",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^4.1.4",
+    "zod": "^4.3.6"
   }
 }

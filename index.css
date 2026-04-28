@@ -19,7 +19,13 @@ body {
     background-image: 
         radial-gradient(circle at 2px 2px, rgba(99, 102, 241, 0.05) 1px, transparent 0);
     background-size: 32px 32px;
-    animation: bg-shift 60s linear infinite;
+    animation: bg-shift 120s linear infinite;
+    opacity: 0.5;
+}
+@media (min-width: 768px) {
+    .honeycomb {
+        opacity: 1;
+    }
 }
 @keyframes bg-shift {
     0% { background-position: 0 0; }
