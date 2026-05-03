@@ -1,3 +1,8 @@
+<img width="720" height="1640" alt="1000970762" src="https://github.com/user-attachments/assets/1ab00294-9c96-4a7a-b4df-bd629a797ff9" />
+<img width="720" height="1640" alt="1000970763" src="https://github.com/user-attachments/assets/d28e7a20-0f03-4588-a9fd-3ada52fa7589" />
+<img width="720" height="1640" alt="1000970764" src="https://github.com/user-attachments/assets/983b139c-e36e-4f2b-b0e2-a9fe9ba06830" />
+<img width="720" height="1640" alt="1000970757" src="https://github.com/user-attachments/assets/01d96e6e-fbb2-4b69-ac51-d4c9867852fe" />
+<img width="720" height="1640" alt="1000970758" src="https://github.com/user-attachments/assets/083119d5-6e38-40af-977c-034b7c48353f" />
 # HDA VAULT (Hive Data Architecture)
 
 <div align="center">
